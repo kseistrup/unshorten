@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+# -*- mode: python; coding: utf-8 -*-
+"""
+Usage: unshorten [OPTIONS] [URL]
+
+positional arguments:
+  URL              URL to unshorten
+
+optional arguments:
+  -h, --help       show this help message and exit
+  -v, --version    show version information and exit
+  -c, --copyright  show copying policy and exit
+
+If no URL is given on the command line, unshorten will
+read a single URL from standard input.
+"""
+##############################################################################
+# This program is free software; you can redistribute it and/or modify it    #
+# under the terms of the GNU General Public License as published by the Free #
+# Software Foundation; either version 3 of the License, or (at your option)  #
+# any later version.                                                         #
+#                                                                            #
+# This program is distributed in the hope that it will be useful, but with-  #
+# out any warranty; without even the implied warranty of merchantability or  #
+# fitness for a particular purpose. See the GNU General Public License for   #
+# more details.  <http://gplv3.fsf.org/>                                     #
+##############################################################################
+
+import sys
+import os
+import pathlib
+import argparse
+import uuid
+
+from pprint import pprint
+from http.client import responses
+
+try:
+    from locale import (Error, setlocale, LC_ALL)
+    _ = setlocale(LC_ALL, '')
+except (ImportError, ModuleNotFoundError, NameError, Error):
+    pass
+
+# 3rd party modules
+try:
+    import requests
+except (ImportError, ModuleNotFoundError) as imperr:
+    print(imperr, file=sys.stderr)
+    sys.exit(1)
+
+__author__ = 'Klaus Alexander Seistrup <klaus@seistrup.dk>'
+__whoami__ = 'unshorten'
+__revision__ = '2017-03-24'
+__version__ = '0.1.2'
+__github__ = 'https://github.com/kseistrup/unshorten'
+__copyright__ = """
+unshorten {} ({})
+Copyright © 2017 Klaus Alexander Seistrup <klaus@seistrup.dk>
+
+This is free software; see the source for copying conditions. There is no
+warranty; not even for merchantability or fitness for a particular purpose.\
+""".format(__version__, __revision__)
+
+DEBUG = os.environ.get('DEBUG', 'False')[0].upper() in '1JTY'  # 1/Ja/True/Yes
+EPILOG = """
+If no URL is given on the command line, unshorten will
+read a single URL from standard input.
+"""
+
+(STDIN, STDERR) = (sys.stdin, sys.stderr)
+
+
+def debug(head, data=None):
+    """Possibly pretty print an object to stderr"""
+    if DEBUG:
+        pprint(head if data is None else {head: data}, stream=STDERR)
+
+
+def deuglify(error):
+    """Deuglify the EnvironmentError class of errors"""
+    debug('ugly', error)
+
+    if not isinstance(error, Exception):
+        return error
+
+    nargs = len(error.args)
+
+    if nargs == 1:
+        return str(error)
+
+    strerr = getattr(error, 'strerror', None)
+
+    if nargs == 2 and strerr is not None:
+        fname1 = getattr(error, 'filename', None)
+        fname2 = getattr(error, 'filename2', None)
+
+        if fname1 and fname2:
+            return '{}: {} → {}'.format(strerr, fname1, fname2)
+        if fname1 or fname2:
+            return '{}: {}'.format(strerr, fname1 or fname2)
+
+        return strerr
+
+    # Let's not pretend that we know the nature on the exception
+    return error
+
+
+def die(error=None):
+    """Exit gracefully"""
+    debug('exit', error)
+
+    if error:
+        print(deuglify(error), file=STDERR)
+
+    sys.exit(1 if error else 0)
+
+
+def unshorten(shorty):
+    """Possibly unshorten an URL"""
+    if not shorty:
+        die('No URL to unshorten.')
+
+    if not shorty.startswith('https://') and not shorty.startswith('http://'):
+        die('HTTP or HTTPS URLs only, please.')
+
+    headers = {
+        'DNT': '1',
+        'User-Agent': 'Unshorten/{} (+{})'.format(__version__, __github__),
+        'X-UUID': str(uuid.uuid4()),
+        'X-Python-Version': '{0}.{1}.{2}'.format(*sys.version_info),
+    }
+    request = requests.head(shorty, headers=headers)
+
+    if 200 <= request.status_code < 300:
+        return shorty
+    if 300 <= request.status_code < 400:
+        return request.headers.get('Location', shorty)
+
+    reason = responses.get(
+        request.status_code,
+        '(Unrecognized HTTP status code)'
+    )
+    die('{} {}: {}'.format(request.status_code, reason, shorty))
+
+
+def main(progname=__whoami__):
+    """Main entry point"""
+
+    debug('argv', sys.argv)
+
+    parser = argparse.ArgumentParser(
+        prog=progname,
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog=EPILOG
+    )
+    parser.add_argument('-v', '--version', action='version',
+                        version='%(prog)s/{} ({})'.format(
+                            __version__, __revision__
+                        ), help='show version information and exit')
+    parser.add_argument('-c', '--copyright', action='version',
+                        version=__copyright__,
+                        help='show copying policy and exit')
+    parser.add_argument('URL', nargs='?', help='URL to unshorten')
+
+    args = parser.parse_args()
+    debug('args', args)
+
+    exitcode = 1
+
+    try:
+        shorty = (STDIN.read() if args.URL is None else args.URL).strip()
+        longy = unshorten(shorty)
+        if longy is not None:
+            print(longy)
+            exitcode = 0
+    except (KeyboardInterrupt, BrokenPipeError):
+        die()
+    except (IOError, OSError, MemoryError) as error:
+        die(error)
+    except Exception as error:
+        die(error)
+
+    return exitcode
+
+
+if __name__ == '__main__':
+    sys.exit(main(pathlib.Path(sys.argv[0]).name))
+
+# eof
